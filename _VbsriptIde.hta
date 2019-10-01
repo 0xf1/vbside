@@ -1,0 +1,1714 @@
+
+<html>
+<head>
+<META http-equiv="Content-Style-Type" content="text/css"> 
+<title>VBScript IDE</title>
+<HTA:APPLICATION 
+	ID="ide"
+	VERSION="0.13 Beta"
+	APPLICATIONNAME="VBScript IDE"
+	SYSMENU="yes"
+	MAXIMIZEBUTTON="yes"
+	MINIMIZEBUTTON="yes"
+	INNERBORDER="no"
+	SCROLL="no"
+	WINDOWSTATE="normal"
+	ICON=NULL
+	
+>
+
+<style type="text/css">
+.optheader{
+	font-weight:bold;
+	color: #b10dc9;
+}
+.optmemberglobal{
+	color: blue;
+}
+.optmemberlocal{
+	color: #b10dc9;
+}
+.optmethod{
+	color: green;
+}
+.optclass{
+	color: red;
+}
+</style>
+
+<script language="VBscript">
+option explicit
+
+dim curretEditorFontSize
+curretEditorFontSize = 15
+dim currentCarret
+
+
+
+dim lastSelectedClass
+
+dim curClass
+dim curFunction
+
+
+dim curFuncs
+
+sub editorOnClick
+	refreshExplorer
+end sub
+
+sub refreshExplorer
+
+	if len(document.selection.createRange.text)>0 then exit sub
+
+'	dim i
+'	dim lines
+'	lines = split(getEditor.value, vbNewLine)
+
+	dim ccf
+	ccf = getCurrentClassAndFunction
+	ccf = replace(ccf, chr(10), "")
+	ccf = replace(ccf, chr(13), "")
+	ccf = replace(ccf, chr(9), "")
+	ccf = split(ccf,"|")
+	dim cc, cf, cl
+	cc = ccf(0)
+	cf = ccf(1)
+	cl = int(ccf(2))
+
+	document.getElementById("gotolineInput").value = cl
+''msgbox cc
+	dim kw
+	set kw = getKeywords
+	dim i
+
+	dim curIdx, newIdx
+	newIdx = -2
+	curIdx = kw.selectedIndex
+
+	if cc = "main" then 
+		kw.selectedIndex = -1
+		newIdx = -1
+
+		for i = 0 to kw.options.length -1
+			if kw.options(i).value <> "" then
+				'msgbox kw.options(i).value & "===" &  kw.options(i).text
+
+				if split(kw.options(i).value,"|")(2) = cf then
+					''if kw.options(i).value = cc then
+					kw.selectedIndex = i
+					newIdx = i
+					exit for
+				end if
+			end if
+		next
+
+
+	else		
+		for i = 0 to kw.options.length -1
+			if kw.options(i).value <> "" then
+				'msgbox kw.options(i).value & "===" &  kw.options(i).text
+
+				if split(kw.options(i).value,"|")(0) = cc then
+					''if kw.options(i).value = cc then
+					kw.selectedIndex = i
+					newIdx = i
+					exit for
+				end if
+			end if
+		next
+	end if
+
+	if newIdx <> curIdx then
+		fillKeywordsLocal
+	end if
+
+	dim kwl
+	set kwl = getKeywordsLocal
+	kwl.selectedIndex = -1
+
+	if cf <> "empty" and cf <> "" then
+		dim y
+		for y = 0 to kwl.options.length - 1
+			if split(kwl.options(y).value,"|")(1) <> "class" then
+
+				if cf = split(kwl.options(y).value,"|")(2) then
+					kwl.selectedIndex = y
+					exit for
+				
+				end if
+			end if
+		next
+
+	end if
+	
+	
+
+
+end sub
+
+
+sub gotolineInputOnkeyDownEvent
+    	dim keyid 
+    	keyid = window.event.keyCode
+	if keyid = 13 then
+		dim c
+		set c = document.getElementById("gotolineInput")
+		gotoLine c.value
+		window.event.returnvalue=false
+	end if
+end sub
+
+sub collectCurrentFunctions()
+	dim ccf
+	ccf = split(getCurrentClassAndFunction, "|")
+	curClass = ccf(0)
+	curFunction = ccf(1)
+	set curFuncs = collectMethodsAndVariables(ccf(0), ccf(1), false)
+end sub
+
+function collectMethodsAndVariables( curClass, curFunction, isFiltered)
+	dim c
+	set c = new Collection
+
+	dim lines
+	lines = split(getEditor.value, vbNewLine)
+	dim line
+	dim cClass,cFunction, cVar
+
+	cClass = "Main"
+	dim lastItem, curItem
+	for each line in lines
+		line = trim(replace(line, chr(9), " "))
+	
+		cVar = "" 
+
+		if startWith(line, "class ") then
+			cClass = split(line, " ")(1)
+			cFunction = ""
+
+			if not isFiltered then
+				c.add cClass & "|class|" & cClass & "|class"
+			end if
+
+		elseif startWith(line, "end class") then
+			cClass = "Main"
+			cFunction = ""
+
+		elseif startWith(line, "function ") or  startWith(line, "sub ") then
+			cFunction = split(line, " ")(1)
+			if (cClass = "Main" and not isFiltered) or cClass = curClass  then
+		
+				c.add cClass & "|method|" & cFunction & "|public"
+			end if
+
+		elseif startWith(line, "public function ") or  startWith(line, "public sub ") then
+			cFunction = split(line, " ")(2)
+			if (cClass = "Main" and not isFiltered) or cClass = curClass  then
+				c.add cClass & "|method|" & cFunction & "|public"
+			end if
+
+		elseif startWith(line, "private function ") or  startWith(line, "private sub ") then
+			cFunction = split(line, " ")(2)
+			if (cClass = "Main" and not isFiltered) or cClass = curClass  then
+				c.add cClass & "|method|" & cFunction & "|private"
+			end if
+
+		elseif startWith(line, "public property get ") or  startWith(line, "public property set ") then
+			cFunction = split(line, " ")(3)
+			if (cClass = "Main" and not isFiltered) or cClass = curClass  then
+				c.add cClass & "|method|" & cFunction & "|public"
+			end if
+
+		elseif startWith(line, "end function") or  startWith(line, "end sub") then
+			cFunction = ""
+		elseif startWith(line, "end property") then
+			cFunction = ""
+		elseif startWith(line, "private ") or startWith(line, "public ") or startWith(line, "dim ") then
+			if ucase(split(line, " ")(1)) <> "PROPERTY" _
+				and ucase(split(line, " ")(1)) <> "SUB" _
+				and ucase(split(line, " ")(1)) <> "FUNCTION" then	
+
+				dim cvarAr
+				cvarAr = split(line, " ")
+				cvarAr(0) = ""
+				cvar = trim(join(cvarAr))
+				cvar = split(cvar, ":")(0)
+
+				'cVar = split(split(line, " ")(1) , ":")(0)
+
+				if ((cClass = "Main" and not isFiltered) or cClass = curClass) and (cFunction = "" or cFunction = curFunction)  then
+					dim dimArr
+					dimArr = split(cVar, ",")
+					dim dimArrItem
+					for each dimArrItem in dimArr
+						dimArrItem = trim(dimArrItem)
+					
+						if (cFunction = curFunction) or ( cFunction = "") then
+							if startWith(line, "private ") then
+								c.add cClass & "|memberlocal|" & dimArrItem  & "|private"
+							else
+								c.add cClass & "|memberlocal|" & dimArrItem  & "|public"
+							end if
+
+						else
+							if startWith(line, "private ") then
+								c.add cClass & "|memberglobal|" & dimArrItem  & "|private"
+							else
+								c.add cClass & "|memberglobal|" & dimArrItem  & "|public"
+							end if
+
+						end if
+					next
+				end if
+
+
+			end if
+		end if
+
+	
+	next
+
+	c.sort
+
+
+	set collectMethodsAndVariables = c
+
+end function
+
+
+sub classFilterInputKeyUp
+
+	dim ael
+	if window.event.keycode = 27 then
+		set ael = document.getElementById("classesPane")
+		ael.style.visibility = "hidden"
+
+		'lastSelectedFieldClass = empty
+
+		dim editor
+		set editor = getEditor 'document.getElementById("editor")
+		editor.focus()
+
+		setCaret editor,currentCarret-1
+		exit sub
+	end if
+
+
+	if window.event.keycode=40 then 'down
+		document.getElementById("classes").focus()
+		document.getElementById("classes").selectedIndex = 0
+		
+		exit sub
+	end if
+
+	dim inp
+	set inp = document.getElementById("classFilterInput")
+'msgbox inp.value
+	loadClassesToSelect inp.value,"", false
+
+	if document.getElementById("classFilterInput").value=" " then
+  	  document.getElementById("classFilterInput").value =""
+	end if
+
+end sub
+
+
+
+dim currentWordFilter
+
+function classesMenuKeyDown()
+
+    	dim keyid 
+    	keyid = window.event.keyCode
+	dim ael
+	dim editor 
+
+	'dim currentCarret
+
+	if keyid=37 or keyid=8 then 'left or backspace
+		document.getElementById("classFilterInput").focus()
+		
+		exit function
+	end if
+
+	if (keyid = 27) then
+
+		set ael = document.getElementById("classesPane")
+		ael.style.visibility = "hidden"
+
+		'lastSelectedFieldClass = empty
+
+		set editor = getEditor 'document.getElementById("editor")
+		editor.focus()
+
+		setCaret editor,currentCarret-1
+
+
+	elseif (keyid = 13) then
+
+		typeCurrentClass
+		exit function
+		
+	end if
+
+end function 
+
+sub ondblclickMenu
+	typeCurrentClass
+end sub
+
+sub typeCurrentClass
+
+		'replace curent word if typed >>
+		dim ael
+		set ael = document.getElementById("classes")
+
+		document.getElementById("classesPane").style.visibility = "hidden"
+		'ael.style.visibility = "hidden"
+		dim editor
+		set editor = getEditor 'activeEditor 'document.getElementById("editor")
+		editor.focus()
+
+		setCaret editor,currentCarret-1
+
+		dim sel
+		set sel = document.selection.createRange
+
+		dim selVal 
+		selVal =  ael.options(ael.selectedIndex).text
+
+		if len(currentWordFilter)>0 then
+
+
+			if left( ucase(selval) ,len(currentWordFilter))  = ucase(currentWordFilter) then
+			        sel.text =trim( split(  mid( selval, len(currentWordFilter)+1 ,  len(selval)  ) ,"'")(0))
+			else
+			        sel.text = trim( split( selVal,"'")(0))
+			end if		
+
+			currentWordFilter = ""
+		else
+		        sel.text =  trim( split( selVal,"'")(0))
+		end if
+
+		'replace curent word if typed <<
+
+end sub
+
+
+function getCurrentClassAndFunction
+
+	dim ec
+	ec = getEditor.value
+
+	dim ed
+	set ed = getEditor
+
+	dim curCar 
+	curCar = getCaretWONewLIne(getEditor)
+
+'	getKeywords.focus
+'	setCaret getEditor, curCar
+'	getEditor.focus
+
+	dim curClass, curFunction
+
+
+	dim curLineLen
+	curLineLen = 0
+	if curCar <= len(ec) then
+		curLineLen = len(split(mid(ec, curCar, len(ec)), vbNewLine)(0))
+	end if
+
+
+	dim lines
+	lines = split(mid(ec,1, curCar + curLineLen), vbNewLine)
+
+	dim i
+
+	dim line
+	dim curLineNo
+	curLineNo = ubound(lines) + 1
+	for i = ubound(lines) to 0 step -1
+		line = lines(i)
+		'msgbox line
+		'exit for
+		line = replace(line, chr(9), " ")
+		line = trim(line)
+		if curFunction = "" then
+'asdf
+			if startWith(line, "function ") or startWith(line, "sub ") then
+				'curFunction = split(line, " ")(1)
+				curFunction = joinAt(split(line," "),1," ")
+			elseif startWith(line, "public function ") or startWith(line, "public sub ") then
+				'curFunction = split(line, " ")(2)
+				curFunction = joinAt(split(line," "),2," ")
+			elseif startWith(line, "private function ") or startWith(line, "private sub ") then
+				'curFunction = split(line, " ")(2)
+				curFunction = joinAt(split(line," "),2," ")
+			elseif startWith(line, "end function") or startWith(line, "end sub") then
+				curFunction = "empty"
+
+			end if
+		end if
+
+		if startWith(line, "class ") then
+			curClass = split(line, " ")(1)
+			exit for
+		elseif startWith(line, "end class") then
+			curClass = "main"
+			exit for
+		end if
+
+	next
+
+	if curClass = "" then curClass = "main"
+	if curFunction = "" then curFunction = "empty"
+
+	getCurrentClassAndFunction	 = curClass & "|" & curFunction & "|" & curLineNo
+
+end function
+
+
+
+sub loadClassesToSelect(filter, classFilter, isNewKeyword)
+	filter = replace(trim(filter),chr(9),"")
+
+	if classFilter <> "" then
+		classFilter = replace(classFilter,".","")		
+		dim mFuncs
+		set mFuncs = new Collection
+
+		dim fc
+		for each fc in curFuncs.items
+			if split(fc,"|")(1) = "memberlocal" then				
+				if split(split(split(fc, "|")(2),"'")(0)," ")(0) = classFilter then
+					dim lvar
+					lvar = split(fc,"|")(2)
+					if instr(lvar,"'as ") = 0 then 
+						msgbox "must set type of variable.ex: dim myVar 'as MyClass"
+						exit sub
+					end if
+					classFilter = split(trim(split(lvar,"'")(1))," ")(1)
+
+					exit for
+
+					'msgbox classFilter
+				end if
+
+			end if 
+		next
+
+
+		set curFuncs = collectMethodsAndVariables(classFilter,"", true)
+	end if
+
+	dim s 
+	set s = document.getElementById("classes")
+	s.length = 0
+
+'	if (classFilter = "") and (not isNewKeyword) then
+'		dim cons
+'		set cons = document.createElement("option")
+'		cons.text = "CONSTANTS"
+'		s.add cons
+'	end if
+
+	'getCurrentClassAndFunction
+
+	'set curFuncs = collectMethodsAndVariables( curClass, curFunction)
+
+	'msgbox curClass & " - " & curFunction
+
+	dim c
+	dim optionx 
+	for each c in curFuncs.items 'functions.items 'classes
+		if filter="" then
+
+			if isNewKeyword then
+				if split(c,"|")(0)<>"Main" and split(c,"|")(1)="class" then
+					set optionx = document.createElement("option")
+					optionx.text = split(c,"|")(2) 'c.name
+					optionx.className = "optclass"
+					s.add optionx
+				end if
+			
+			else
+
+				if (classFilter <> "" and split(c,"|")(3) <> "private") or (classFilter = "") then
+					set optionx = document.createElement("option")
+					optionx.text = split(split(c,"|")(2),":")(0) 'c.name
+					if split(c,"|")(1) = "memberglobal" then
+						optionx.className = "optmemberglobal"
+					elseif split(c,"|")(1) = "memberlocal" then
+						optionx.className = "optmemberlocal"
+					elseif split(c,"|")(1) = "method" then
+						optionx.className = "optmethod"
+					elseif split(c,"|")(1) = "class" then
+						optionx.className = "optclass"
+					end if
+					'optionx.text = c.name
+					s.add optionx
+				end if
+			end if
+		else 
+
+			'if instr(ucase(trim(split(split(c,"|")(2),"'")(0)) ),ucase(filter))<>0 then
+			if instr(trim(split(split(c,"|")(2),"'")(0)),filter)<>0 then
+				if (classFilter <> "" and split(c,"|")(3) <> "private") or (classFilter = "") then
+					set optionx = document.createElement("option")
+					optionx.text = split(split(c,"|")(2),":")(0) 'c.name
+					if split(c,"|")(1) = "memberglobal" then
+						optionx.className = "optmemberglobal"
+					elseif split(c,"|")(1) = "memberlocal" then
+						optionx.className = "optmemberlocal"
+					elseif split(c,"|")(1) = "method" then
+						optionx.className = "optmethod"
+					elseif split(c,"|")(1) = "class" then
+						optionx.className = "optclass"
+					end if
+
+					'optionx.text = c.name
+					s.add optionx
+				end if
+			end if
+		end if
+	next
+
+end sub
+
+
+sub test
+	msgbox "empty"
+end sub
+
+sub onRowChanged
+
+	dim ec
+	ec = getEditor.value
+
+	dim ed
+	set ed = getEditor
+
+	dim curCar 
+	curCar = getCaretWONewLIne(getEditor)
+
+
+	dim curLineLen
+	curLineLen = len(split(mid(ec, curCar, len(ec)), vbNewLine)(0))
+
+
+	dim lines
+	lines = split(mid(ec,1, curCar + curLineLen), vbNewLine)
+
+	dim curFunction, curClass
+
+	dim i
+
+	dim line
+	for i = ubound(lines) to 0 step -1
+		line = lines(i)
+		line = replace(line, chr(9), " ")
+		line = trim(line)
+		if curFunction = "" then
+			if startWith(line, "function ") or startWith(line, "sub ") then
+				curFunction = split(line, " ")(1)
+			elseif startWith(line, "public function ") or startWith(line, "public sub ") then
+				curFunction = split(line, " ")(2)
+			elseif startWith(line, "private function ") or startWith(line, "private sub ") then
+				curFunction = split(line, " ")(2)
+
+			end if
+		end if
+
+		if startWith(line, "class ") then
+			curClass = split(line, " ")(1)
+			exit for
+		elseif startWith(line, "end class") then
+			curClass = "Main"
+			exit for
+		end if
+
+	next
+
+	if curClass = "" then curClass = "Main"
+	getExec.value =  curClass & " " & curFunction
+
+end sub
+
+
+sub gotoLine(lineno)
+	if lineNo = "" then exit sub
+	if not isnumeric(lineno) then exit sub
+
+	lineNo = cint(lineNo)
+
+
+	dim lines
+	lines = split(getEditor.value, vbNewLine)
+	dim line, carPos, lineCounter
+	lineCounter = 0 
+	carPos = 0
+	for each line in lines
+		carPos = carPos + len(line) 
+		lineCounter = lineCounter + 1
+
+		if lineCounter >= lineNo-1   then
+
+			setCaret getEditor, carPos + lineCounter
+			exit sub
+		end if
+	next
+
+end sub
+
+
+
+sub fontPlus
+	curretEditorFontSize = curretEditorFontSize + 1
+	getEditor.style.fontsize = curretEditorFontSize
+end sub
+sub fontMinus
+	curretEditorFontSize = curretEditorFontSize - 1
+	getEditor.style.fontsize = curretEditorFontSize
+end sub
+
+
+sub executeFile
+	dim exec
+	set exec = getExec
+
+	dim objShell
+	set objShell = CreateObject("shell.application")
+
+	dim par
+	if ubound(split(exec.value," "))>0 then
+		par = mid( exec.value,  instr(exec.value," ")+1,  len(exec.value)  )
+	end if
+
+
+        objShell.ShellExecute split(exec.value," ")(0), par, "", "open", 1
+
+        set objShell = nothing
+
+end sub
+
+'msgbox ide.commandLine
+sub saveFile
+
+	dim exec
+	set exec = getExec
+
+	dim fpath
+	dim fso
+	dim f
+
+	if getExec.value = "" then
+		fpath = inputbox("type file name with .vbs",".vbs")
+		if fpath = "" then exit sub
+
+		set fso = createobject("Scripting.FileSystemObject")
+
+		dim fld
+		fld = replace(document.location.href,"file:","")
+		fld = split(fld,"/")
+		fld(ubound(fld))=""
+		fld = join(fld,"/")
+
+		fpath = fld & fpath
+
+		getExec.value = fpath
+
+		set f = fso.openTextFile(fpath,2,true)
+		f.write getEditor.value
+		f.close	
+
+
+		exit sub
+	end if
+
+	fpath = split(getExec.value," ")(0)   	
+	set fso = createobject("Scripting.FileSystemObject")
+
+	set f = fso.openTextFile(fpath,2,true)
+	f.write getEditor.value
+	f.close	
+
+end sub
+
+Function SelectFile()
+    ' File Browser via HTA
+    ' Author:   Rudi Degrande, modifications by Denis St-Pierre and Rob van der Woude
+    ' Features: Works in Windows Vista and up (Should also work in XP).
+    '           Fairly fast.
+    '           All native code/controls (No 3rd party DLL/ XP DLL).
+    ' Caveats:  Cannot define default starting folder.
+    '           Uses last folder used with MSHTA.EXE stored in Binary in [HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\ComDlg32].
+    '           Dialog title says "Choose file to upload".
+    ' Source:   https://social.technet.microsoft.com/Forums/scriptcenter/en-US/a3b358e8-15ae-4ba3-bca5-ec349df65ef6/windows7-vbscript-open-file-dialog-box-fakepath?forum=ITCG
+
+    Dim objExec, strMSHTA, wshShell
+
+    SelectFile = ""
+
+    ' For use in HTAs as well as "plain" VBScript:
+    strMSHTA = "mshta.exe ""about:" & "<" & "input type=file id=FILE>" _
+             & "<" & "script>FILE.click();new ActiveXObject('Scripting.FileSystemObject')" _
+             & ".GetStandardStream(1).WriteLine(FILE.value);close();resizeTo(0,0);" & "<" & "/script>"""
+
+
+
+
+    Set wshShell = CreateObject( "WScript.Shell" )
+    Set objExec = wshShell.Exec( strMSHTA )
+
+    SelectFile = objExec.StdOut.ReadLine( )
+
+    Set objExec = Nothing
+    Set wshShell = Nothing
+End Function
+
+sub goToKeyword
+	dim kw
+	set kw = getKeyWords
+	if kw.selectedindex < 0 then exit sub
+	dim k
+	k = kw.options(kw.selectedIndex).text
+	if k = "" then exit sub	
+        dim typ
+	typ = kw.options(kw.selectedIndex).value
+	
+	dim c,t,n
+	c = split(typ,"|")(0)
+        t = split(typ,"|")(1)
+	n = split(typ,"|")(2)
+
+
+	dim lines
+	lines = split(getEditor.value, vbNewLine)
+	dim line
+	dim lineLen, carPos
+	dim lineCounter
+	lineCounter = 0 
+	dim curClassName
+	curClassName = "Main"
+	for each line in lines
+
+		lineLen = len(line) 
+	
+		line = replace(line, chr(9), " ")
+		line = trim(line)	
+
+		if startWith(line, "class ") then
+			curClassName = split(line," ")(1)
+		elseif startWith(line, "end class") then
+			curClassName = "Main"		
+		end if
+		
+		if startWith(line, "function ") or startWith(line, "sub ") or startWith(line, "class ") then
+			if curClassName = c and split(joinAt(split(line," "),1," "), ":")(0) = n then  'split(line," ")(1) = n then
+				setCaret getEditor, carPos + lineCounter
+				fillKeywordsLocal
+				exit for
+			end if
+		elseif startWith(line, "': ") then
+			if curClassName = c and ":" & split(joinAt(split(line," "),1," "), ":")(0) = n then 'split(line," ")(1) = n then
+				setCaret getEditor, carPos + lineCounter
+				exit for
+			end if
+		end if
+
+		carPos = carPos + lineLen 
+		lineCounter = lineCounter + 1
+	next
+
+	'setCaret getEditor, 50
+end sub
+
+sub goToKeywordLocal
+	dim kwl
+	set kwl = getKeyWordsLocal
+	if kwl.selectedindex < 0 then exit sub
+	dim k
+	k = kwl.options(kwl.selectedIndex).text
+	if k = "" then exit sub	
+        dim typ
+	typ = kwl.options(kwl.selectedIndex).value
+	
+	dim c,t,n
+	c = split(typ,"|")(0)
+        t = split(typ,"|")(1)
+	n = split(typ,"|")(2)
+
+	dim lines
+	lines = split(getEditor.value, vbNewLine)
+	dim line
+	dim lineLen, carPos
+	dim lineCounter
+	lineCounter = 0 
+	dim curClassName
+	curClassName = "Main"
+	for each line in lines
+
+		lineLen = len(line) 
+	
+		line = replace(line, chr(9), " ")
+		line = trim(line)	
+
+		if startWith(line, "class ") then
+			curClassName = split(line," ")(1)
+		elseif startWith(line, "end class") then
+			curClassName = "Main"		
+		end if
+		
+		if startWith(line, "function ") or startWith(line, "sub ") or startWith(line, "class ") then
+			if curClassName = c and  split(joinAt(split(line," "),1," "), ":")(0)  = n then ' split(line," ")(1) = n then
+				setCaret getEditor, carPos + lineCounter
+				exit for
+			end if
+		elseif startWith(line, "private function ") or startWith(line, "private sub ") or startWith(line, "public sub ") or startWith(line, "public function ") then
+			if curClassName = c and  split(joinAt(split(line," "),2," "), ":")(0)  = n then 'split(line," ")(2) = n then
+				setCaret getEditor, carPos + lineCounter
+				exit for
+			end if
+
+		end if
+
+		carPos = carPos + lineLen 
+		lineCounter = lineCounter + 1
+	next
+
+	'setCaret getEditor, 50
+end sub
+
+
+function fillKeywordsLocal
+
+	dim kw, kwl
+	set kw = getKeywords
+	set kwl = getKeywordsLocal
+
+
+	kwl.options.length = 0
+
+	if kw.selectedindex < 0 then exit function
+
+
+	dim k
+	k = kw.options(kw.selectedIndex).text
+	if k = "" then exit function	
+        dim typ
+	typ = kw.options(kw.selectedIndex).value
+
+	dim c,t,n
+	c = split(typ,"|")(0)
+        t = split(typ,"|")(1)
+	n = split(typ,"|")(2)
+
+	dim c2,t2,n2
+	dim l
+	dim o
+	for each l in functions.items
+		c2 = split(l,"|")(0)
+        	t2 = split(l,"|")(1)
+		n2 = split(l,"|")(2)
+
+		if c2 = c and t2 <> "class" and t2 <> "label" then
+			set o = document.createElement("option")
+			o.text = n2
+			o.value = l
+			kwl.add o
+		elseif c2 = c and t2 = "class" then
+			set o = document.createElement("option")
+			o.text = n2
+			o.disabled = true
+			o.value = l
+			kwl.add o
+
+		end if
+
+	next
+
+
+	
+end function
+
+function setCaret(obj, position) 
+	dim range
+	set range = obj.createTextRange()
+	range.move "character", position
+	range.select()
+end function
+
+
+sub openFile
+
+
+
+	dim fPath
+	fPath = selectFile
+	if fPath = "" then exit sub
+
+
+	
+
+	dim fso 
+	set fso = createObject("Scripting.FileSystemObject")
+	dim f
+	set f = fso.openTextFile(fPath)
+	dim fc
+	if f.atEndOfStream then exit sub
+	fc = f.readAll
+	f.close
+	set f = nothing
+	set fso = nothing
+
+	dim ed
+	set ed = getEditor
+	ed.value = fc
+	
+	loadStructure	
+
+	getExec.value = fPath
+end sub
+
+function getExec
+	set getExec = document.getElementById("execute")
+end function
+
+function getEditor()
+	set getEditor =	document.getElementById("editor")
+end function
+
+function getKeyWords()
+	set getKeyWords = document.getElementById("keywords")
+end function
+
+function getKeyWordsLocal()
+	set getKeyWordsLocal = document.getElementById("keywordsLocal")
+end function
+
+
+dim functions, classes
+
+'dim a(4)
+'a(0) = "1"
+'a(1) = "2"
+'a(2) = "3"
+'a(3) = "4"
+'msgbox  joinAt(a,1,"-")
+
+function joinAt(joinArray, joinAtIndex, joinWith)
+	dim arLen: arLen = ubound(joinArray)
+
+	for joinAtIndex = joinAtIndex to arLen
+		joinAt = joinAt & joinArray(joinAtIndex) 
+		if arLen <> joinAtIndex then joinAt = joinAt & joinWith
+	next
+end function
+
+sub loadStructure
+
+	set functions = new Collection
+	set classes = new Collection
+
+
+	dim ec
+	ec = getEditor.value
+
+	dim lines
+	lines = split(ec,vbNewLine)
+	dim line
+	dim curClassName
+	curClassName = "Main"
+	functions.add  curClassName & "|class|Main"  
+	for each line in lines
+		line = replace(line, chr(9), " ")
+		line = trim(line)	
+		
+		if startWith(line, "function ") then
+
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),1," "), ":")(0) 'split(line," ")(1)  
+		elseif startWith(line, "sub ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),1," "), ":")(0) ' split(line," ")(1)  
+		elseif startWith(line, "private sub ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),2," "), ":")(0) ' split(line," ")(2)  
+		elseif startWith(line, "public sub ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),2," "), ":")(0) ' split(line," ")(2)  
+		elseif startWith(line, "private function ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),2," "), ":")(0) ' split(line," ")(2)  
+		elseif startWith(line, "public function ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),2," "), ":")(0) ' split(line," ")(2)  
+		elseif startWith(line, "': ") then
+			functions.add  curClassName & "|label|" & ":" & split(joinAt(split(line," "),1," "), ":")(0) ' split(line," ")(1)  
+
+
+		elseif startWith(line, "public property let ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),3," "), ":")(0) ' split(line," ")(3)  
+		elseif startWith(line, "private property let ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),3," "), ":")(0) ' split(line," ")(3)  
+		elseif startWith(line, "public property get ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),3," "), ":")(0) ' split(line," ")(3)  
+		elseif startWith(line, "private property get ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),3," "), ":")(0) ' split(line," ")(3)  
+		elseif startWith(line, "public property set ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),3," "), ":")(0) ' split(line," ")(3)  
+		elseif startWith(line, "private property set ") then
+			functions.add  curClassName & "|function|" & split(joinAt(split(line," "),3," "), ":")(0) ' split(line," ")(3)  
+
+
+		elseif startWith(line, "class ") then
+			curClassName = split(line," ")(1) 
+			functions.add  curClassName & "|class|" & split(line," ")(1)  
+		elseif startWith(line, "end class") then
+			curClassName = "Main"
+		end if
+	next
+
+
+
+	'printout
+
+	functions.sort
+	classes.sort
+
+
+	
+	dim kw
+	set kw = getKeyWords
+	kw.options.length = 0
+	getKeywordsLocal.options.length = 0
+	dim c, o
+
+
+	'first main
+        set o = document.createElement("option")
+	o.text = "Main class"
+	o.className = "optheader"
+	o.disabled = true
+	kw.add o
+
+	dim s
+	for each c in functions.items
+		s = split(c,"|") 
+		if s(0) = "Main" and s(1) <> "class" and s(1) <> "label" then
+			set o = document.createElement("option")
+			o.text = "  " & s(2)
+			o.value = c
+			kw.add o
+		end if
+	next
+
+
+	'
+        set o = document.createElement("option")
+	o.text = "Classes"
+	o.className = "optheader"
+	o.disabled = true
+	kw.add o
+
+
+	'other classes
+	for each c in functions.items
+		s = split(c,"|") 
+		if s(0) <> "Main" then
+			set o = document.createElement("option")
+
+			if s(1) = "class" then
+				o.text = "  " & s(2)
+				o.value = c
+				o.className = "optclass"
+				kw.add o
+			'else
+			'	o.text = "  " & s(2)
+			'	o.value = c
+			'	kw.add o
+			'
+			end if
+		end if
+	next
+
+
+
+
+	'lables >
+        set o = document.createElement("option")
+	o.text = "Labels"
+	o.className = "optheader"
+	o.disabled = true
+	kw.add o
+
+	for each c in functions.items
+		s = split(c,"|") 
+		if s(1) = "label" then
+			set o = document.createElement("option")
+
+			o.text = "  " & s(2)
+			o.value = c
+			kw.add o
+		end if
+	next
+
+	'lables <	
+
+end sub
+
+
+
+function startWith(searchIn, searchWord)
+	startWith = left(ucase(searchIn), len(searchWord)) =  ucase(searchWord )
+end function
+
+sub editorOnpropertychange
+	'o.text = o.text & " *"
+end sub
+
+sub bodyOnClick
+'	if document.activeelement.id<>document.getElementById("fields").id then
+'		document.getElementById("fields").style.visibility = "hidden"
+'	end if
+'	if document.activeelement.id<>document.getElementById("classesPane").id and _
+'		document.activeelement.id<>document.getElementById("classes").id  and _
+'		document.activeelement.id<>document.getElementById("classFilterInput").id then
+'		document.getElementById("classesPane").style.visibility = "hidden"
+'	end if
+
+'	dim curCar 
+'	curCar = getCaretWONewLIne(getEditor)
+'	dim curLineNo
+'	curLineNo = ubound(split( mid(getEditor.value,1, curCar), vbNewLine))
+'	if lastLineNo <> curLineNo then
+'		onRowChanged
+'		lastLineNo = curLineNo 	
+'	end if
+
+end sub
+
+
+sub onFocusEditor
+'	dim curCar
+'	curCar = getEditor.getattribute( "caret") ',getCaret(activeEditor)
+'	if not isnull(curCar) then
+ 
+'		getEditor.scrollTop = curCar
+'	end if
+
+end sub
+
+
+sub onBlurEditor
+'	getEditor.setAttribute "caret",getEditor.scrollTop
+end sub
+
+
+
+class Collection        	
+	dim arr_()
+	private length_
+	private capacity_
+
+	private sub Class_Initialize()
+		length_ = 0
+		capacity_ = 10
+		redim arr_(capacity_)
+	end sub
+
+	public function items()
+		dim arr2()
+		redim arr2(length_-1)
+		dim i
+		for i = 0 to length_-1 
+			if builtInType(arr_(i)) then
+				arr2(i)=arr_(i)
+			else
+				set arr2(i) = arr_(i)
+			end if
+		next
+				
+		items = arr2
+	end function
+
+	public property get sort()
+
+			dim a,j,temp
+			for a = length_ -1 To 0 Step -1
+				for j = 0 to a -1
+        				if ucase(arr_(j)) > ucase(arr_(j+1)) then
+					    temp=arr_(j+1)
+					    arr_(j+1)=arr_(j)
+			        	    arr_(j)=temp
+			        	end if
+				next
+			next 
+
+	end property
+
+	public property let setArray(arr__)
+		length_ = ubound(arr__,1)			
+		redim arr_(length_)
+		dim i
+		for i = 0 to ubound(arr__,1)
+			arr_(i) = arr__(i)
+		next
+	end property
+
+	public property get length()
+		length = length_
+	end property
+
+	public sub setLength(ln)
+		lenfth = ln
+	end sub
+
+	private property let length(length__)
+		length_ = length__
+	end property
+
+	public function add(element)
+	        if length_ = capacity_ then		
+			capacity_ = capacity_ + int(length/2)
+			redim preserve arr_(capacity_)
+'msgbox "capacity raised to " & capacity_ 
+		end if
+'msgbox length_ & " " & typename(element)
+
+		'redim preserve arr_(length)
+		'dim elType
+		'elType = typename(element)
+
+		if builtInType(element) then
+			arr_(length) = element
+		else
+			'obj
+			set arr_(length_) = element
+		end if
+					
+		length = length + 1		
+
+		if not builtInType(element) then		
+			set add = element
+		else
+			add = element
+		end if
+
+	end function
+
+
+	public property get put(index_,element)
+		if builtInType(element) then
+			arr_(index_) = element
+		else
+			set arr_(index_) = element
+		end if							
+	end property
+
+	public property get item(index__) 
+		if index__>=length then 
+			err.raise 11,"Collection.class","index out of bound. length of array is " & length & ", requested index is " & index__
+		end if
+		if builtInType(arr_(index__)) then
+			item = arr_(index__)
+		else
+			set item = arr_(index__)
+		end if
+	end property
+
+	private function builtInType(element)
+		'dim t
+		't = typename(element)
+		'builtInType = (t="String" or t="Integer"  or t="Variant()" or t="Empty")
+		builtInType = varType(element)<>9
+	end function
+
+	public sub clear
+		length_ = 0
+		capacity_ = 10
+		redim arr_(capacity_)
+	end sub
+
+end class
+
+
+sub bodyOnKeydown
+	if window.event.keycode=116 then 'f5
+		window.event.returnvalue=false
+		executeFile
+	end if
+end sub
+
+dim isCtrl
+function keyUpEvent() 
+	'dim isCtrl
+	if (window.event.keyCode = 17) then 
+		isCtrl = false
+	end if
+
+	dim keyid 
+	keyid = window.event.keyCode
+
+	if keyid = 39 or keyid = 37 or keyid = 38 or keyid = 40 or keyid = 13 or keyid = 33 or keyid = 34 or keyid = 35 or keyid = 36 then
+		refreshExplorer
+	end if
+'msgbox keyid
+end function
+
+
+
+
+dim lastLineNo
+
+function editorOnkeyDownEvent() 
+
+'	dim curCar 
+'	curCar = getCaretWONewLIne(getEditor)
+'	dim curLineNo
+''	curLineNo = ubound(split( mid(getEditor.value,1, curCar), vbNewLine))
+'	if curLineNo <> lastLineNo then
+'		lastLineNo = curLIneNo
+'		onRowChanged
+'	end if
+
+
+
+    	dim keyid ', isCtrl
+    	keyid = window.event.keyCode
+	'dim currentCarret
+
+	if keyId=27 then 'когда нажимаешь на ЕСК то он делает отмену ввода
+		window.event.returnvalue=false
+		exit function	
+	end if
+
+	if (keyId=9) then
+		window.event.returnvalue=false
+
+		dim editor 
+		set editor = getEditor 'document.getElementById("editor")
+		editor.focus()
+                dim car
+		car = getCaret(editor)
+		if (car=0 ) then car = len(editor.value)
+
+	        dim sel
+		set sel = document.selection.createRange
+	        sel.text = chr(9) ' ael.options(ael.selectedIndex).text 'ael.value
+
+
+	end if
+	
+	if (keyId=113) then 'f2
+		saveFile
+	end if
+
+	'if (keyid = 11
+
+
+
+	if (keyid = 17) then 
+		isCtrl = true
+	end if
+
+   
+
+    if (keyid = 32 and isCtrl =true) then '
+	        isCtrl = false
+        		'test autocomplite >>>>>
+
+			currentCarret = getCaretWONewLIne(getEditor)
+
+			dim i, lenx
+
+			dim newKeyword
+			newKeyword = false
+		        dim autoComplWord
+
+			
+			for i=currentCarret-1  to 0 step -1 
+				if (i=0) then			
+					autoComplWord = mid(getEditor.value,1,currentCarret + 1)
+					exit for
+				elseif (mid(getEditor.value,i,1)=" ") then
+					autoComplWord = mid(getEditor.value,i+1,currentCarret-i)
+
+					'check if new keyword before
+					if i=currentCarret-1 then
+
+						if mid(getEditor.value,i-3,3)="new" then
+							newKeyword = true						
+						elseif mid(getEditor.value,i-3,3)="'as" then
+							newKeyword = true						
+						end if
+					end if
+					
+
+
+					exit for
+				elseif (mid(getEditor.value,i,1)=chr(9)) then
+					autoComplWord = mid(getEditor.value,i+1,currentCarret-i)
+					exit for
+				elseif (mid(getEditor.value,i,1)=".") and i<currentCarret-1 then
+					autoComplWord = mid(getEditor.value,i+1,currentCarret-i)
+					exit for
+				elseif (mid(getEditor.value,i,1)=",") then
+					autoComplWord = mid(getEditor.value,i+1,currentCarret-i)
+					exit for
+
+				elseif (mid(getEditor.value,i,1)="(") then
+					autoComplWord = mid(getEditor.value,i+1,currentCarret-i)
+					exit for
+
+				elseif (mid(getEditor.value,i,1)=chr(13)) then
+					autoComplWord = mid(getEditor.value,i+1,currentCarret-i)
+					exit for
+		 
+				end if
+			next	
+
+			autoComplWord = replace(replace(replace(replace(trim(autoComplWord),chr(9),""), vbNewLine,"") ,chr(10),""),chr(13),"")
+
+			currentCarret = getCaret(getEditor)
+
+		'test autocomplite <<<<<
+
+
+
+
+		currentCarret = getCaret(getEditor)
+
+		dim clFilt 
+		set clFilt = document.getElementById("classFilterInput")
+
+		dim commands
+		set commands = document.getElementById("classesPane")
+		'document.getElementById("classes").style.visibility = "visible"
+		commands.style.visibility = "visible"
+		'document.getElementById("classFilterInput").style.visibility = "visible"
+
+		clFilt.value = ""
+
+		collectCurrentFunctions 
+
+		if right(autoComplWord,1) = "." then
+			loadclassestoselect "", autoComplWord, newKeyword
+			document.getElementById("classes").focus
+		elseif newKeyword  then
+			loadclassestoselect "", "", newKeyword
+			document.getElementById("classes").focus
+
+		else
+			currentWordFilter = autoComplWord
+			loadclassestoselect autoComplWord, "", newKeyword
+			clFilt.focus
+			clFilt.value = autoComplWord
+			window.event.returnvalue=false
+			
+		end if
+
+		selectLastSelectedClass
+
+
+
+		'if lastSelectedClass <> "" then
+'		 document.getElementById("classes").focus
+		'else
+
+
+		
+		
+
+
+
+		'end if
+
+'window.event.returnvalue=true
+		commands.style.left = document.body.clientWidth/2 -  commands.offsetWidth / 1.5
+		commands.style.top =  document.body.clientHeight/2 - commands.offsetHeight / 1.5
+'		if not isEmpty(lastSelectedClass) then
+'			showFields lastSelectedClass
+'		end if
+	
+
+    end if
+
+
+
+end function
+
+
+
+sub selectLastSelectedClass
+	if lastSelectedClass<>"" then
+		dim c
+		set c = document.getElementById("classes")
+		dim i
+		for i = 0 to c.options.length-1
+			if c.options(i).text = lastSelectedClass then
+				c.selectedIndex = i
+				exit for
+				
+			end if
+		next
+	end if
+	
+end sub
+
+sub focusClassFilterInput
+  document.getElementById("classFilterInput").focus
+end sub
+
+
+
+
+function getCaret(node) 
+	node.focus()
+	dim c, sel, dul,  len13,lenx
+	c = "\001"
+	set sel = document.selection.createRange()
+	set dul = sel.duplicate()
+	lenx = 0
+
+	dul.moveToElementText(node)
+	sel.text = c
+
+	lenx = instr(dul.text,c)
+
+	if lenx = 0 then
+		len13 = ubound( split( node.value  ,chr(13)) )
+	else
+		len13 = ubound( split(  mid(dul.text,1,lenx)  ,chr(13)) )
+	end if
+
+
+	sel.moveStart "character",-4
+	sel.text = ""
+
+	getCaret = lenx
+	if getCaret = 0 then 
+		getCaret = len(node.value)+1
+	end if
+
+	getCaret = getCaret - len13
+
+end function
+
+function getCaretWONewLIne(node) 
+	dim c, sel, dul, lenx, len13
+	node.focus()
+	c = "\001"
+	set sel = document.selection.createRange()
+	set dul = sel.duplicate()
+	lenx = 0
+
+	dul.moveToElementText(node)
+	sel.text = c
+
+	lenx = instr(dul.text,c)
+
+	if lenx = 0 then
+		len13 = ubound( split( node.value  ,chr(13)) )
+	else
+		len13 = ubound( split(  mid(dul.text,1,lenx)  ,chr(13)) )
+	end if
+
+
+	sel.moveStart "character",-4
+	sel.text = ""
+
+	getCaretWONewLIne = lenx
+	if getCaretWONewLIne = 0 then 
+		getCaretWONewLIne = len(node.value)+1
+	end if
+
+	'getCaret = getCaret ' - len13
+
+end function
+
+</script>
+
+
+</head>
+ 
+<body  onClick="bodyOnClick" onKeyDown="bodyOnKeyDown" style="height:100%;width:100%;margin:0" bgcolor="gray">
+
+
+<select  multiple  size=10 id="words" onkeyup="wordsMenuKeyDown"  style="position:absolute;visibility:hidden;background-color:gray;"> 
+</select>
+
+
+<div id="classesPane" style="position:absolute;visibility:hidden;background-color:gray;">
+<table><tbody>
+<tr><td><input id="classFilterInput" onKeyUp="classFilterInputKeyUp" style="width:100%" type=text></input>
+</td></tr>
+<tr><td>
+<select  multiple  size=10 id="classes" onkeyup="classesMenuKeyDown" 
+	ondblclick="ondblclickMenu"
+ > 
+</select>
+</td></tr>
+</tbody></table>
+</div>
+
+
+<select  multiple  size=10 id="fields" onkeyup="fieldMenuKeyDown" style="position:absolute;visibility:hidden;" > 
+</select>
+
+<table style="height:100%;width:100%;" bgcolor="#B4B7BA" cellpadding=0 cellspacing=0 id="mainLayout">
+<tbody>
+<tr>
+
+	<td colspan=2>	
+		<button style="margin:1;" onclick="openFile">open</button>				
+		<button style="margin:1;" onclick="saveFile">save</button>
+		<button style="margin:1;" onclick="executeFile">run F5</button>
+        	<button style="margin:1;" onclick="fontPlus">font+</button>
+        	<button style="margin:1;" onclick="fontMinus">font-</button>
+		<button style="margin:1;" onclick="loadStructure">refresh</button>
+		<div style=" position: absolute; top: 0px; right: 0px">goto:<input type="text" id="gotolineInput" size=2 onkeydown="gotolineInputOnkeyDownEvent"></input></div>
+	</td>
+</tr>
+<tr >
+
+
+
+<td  style="height:100%;resize: both;    overflow: auto;" >
+<table style="height:100%;"><tbody>
+<tr  style="height:50%;">
+	<td>
+	<select  multiple onKeyDown="filesOnKeyDown" style="height:100%;width=200px" size=2 id="keywords" ondblclick = "goToKeyword" >
+	</select>
+	</td>
+</tr>
+<tr  style="height:50%;">
+	<td>
+	<select  multiple onKeyDown="filesOnKeyDown" style="height:100%;width=200px" size=2 id="keywordsLocal" ondblclick = "goToKeywordLocal" >
+	</select>
+	</td>
+</tr>
+</tbody></table>
+</td>
+
+
+
+<td id="editorHolder" bgcolor="black" style="height:100%;width:100%" >
+
+<textarea bgcolor="blue" wrap="off" id="editor"  onpropertychange="editorOnpropertychange" 
+        onBlur="onBlurEditor" onFocus="onFocusEditor"  onClick = "editorOnClick"
+	style="font-family:Consolas;width:100%;height:100%;color:white;background-color:#2E4A62;" onkeydown="editorOnkeyDownEvent" onKeyup="keyUpEvent"
+></textarea>
+
+</td>
+
+
+
+</tr>
+<tr>
+<td colspan=2 bgcolor="white" style="width:100%" >
+<input type=text id="execute" style="width:100%" ></input> 
+</td>
+</tr>
+</tbody>
+</table>
+ 
+</body>
+</html>
